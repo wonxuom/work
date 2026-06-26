@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { emit } from "@tauri-apps/api/event";
+import { emitTo } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "./api";
 
@@ -9,12 +9,17 @@ export default function Capture() {
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    input.current?.focus();
+    const focusInput = () => input.current?.focus();
+    focusInput();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") void getCurrentWindow().hide();
     };
+    window.addEventListener("focus", focusInput);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("focus", focusInput);
+      window.removeEventListener("keydown", onKey);
+    };
   }, []);
 
   async function submit(event: FormEvent) {
@@ -22,16 +27,16 @@ export default function Capture() {
     const value = content.trim();
     if (!value) return;
     await api.createNote(value);
-    await emit("note-created");
+    await emitTo("main", "note-created");
     setContent("");
     setSaved(true);
     window.setTimeout(() => setSaved(false), 900);
   }
 
   return (
-    <main className="capture-shell">
+    <main className="capture-shell" data-tauri-drag-region>
       <form className="capture-box" onSubmit={submit}>
-        <span className="capture-mark" aria-hidden="true">+</span>
+        <span className="capture-mark" aria-hidden="true" data-tauri-drag-region>+</span>
         <input
           ref={input}
           value={content}
@@ -40,10 +45,10 @@ export default function Capture() {
           aria-label="빠른 기록"
           autoComplete="off"
         />
-        <span className={saved ? "capture-status visible" : "capture-status"}>
+        <span className={saved ? "capture-status visible" : "capture-status"} data-tauri-drag-region>
           저장됨
         </span>
-        <kbd>↵</kbd>
+        <kbd data-tauri-drag-region>↵</kbd>
       </form>
     </main>
   );

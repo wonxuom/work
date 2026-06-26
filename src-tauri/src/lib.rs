@@ -9,7 +9,7 @@ struct Db(Mutex<Connection>);
 #[derive(Debug, Serialize)]
 struct Note { id: i64, content: String, created_at: String, updated_at: String, tags: Vec<String>, project: Option<String>, category: String }
 #[derive(Debug, Serialize)]
-struct Plan { id: i64, date: String, priority: String, content: String, completed: bool }
+struct Plan { id: i64, date: String, priority: String, content: String, memo: String, completed: bool }
 #[derive(Serialize)]
 struct Summary { completed: Vec<Plan>, decisions: Vec<Note>, work: Vec<Note>, ideas: Vec<Note>, questions: Vec<Note>, feedback: Vec<Note> }
 #[derive(Debug, Serialize, Deserialize)]
@@ -69,19 +69,26 @@ fn update_note(id: i64, content: String, tags: Vec<String>, db: State<Db>) -> Re
 }
 #[tauri::command]
 fn delete_note(id: i64, db: State<Db>) -> Result<(), String> { db.0.lock().map_err(|e| e.to_string())?.execute("DELETE FROM notes WHERE id=?1", params![id]).map_err(|e| e.to_string())?; Ok(()) }
-fn row_to_plan(row: &rusqlite::Row<'_>) -> rusqlite::Result<Plan> { Ok(Plan { id: row.get(0)?, date: row.get(1)?, priority: row.get(2)?, content: row.get(3)?, completed: row.get::<_, i64>(4)? != 0 }) }
+fn row_to_plan(row: &rusqlite::Row<'_>) -> rusqlite::Result<Plan> { Ok(Plan { id: row.get(0)?, date: row.get(1)?, priority: row.get(2)?, content: row.get(3)?, completed: row.get::<_, i64>(4)? != 0, memo: row.get(5)? }) }
 #[tauri::command]
 fn list_plans(date: Option<String>, db: State<Db>) -> Result<Vec<Plan>, String> {
     let date = date.unwrap_or_else(|| Local::now().format("%Y-%m-%d").to_string()); let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let mut statement = conn.prepare("SELECT id, date, priority, content, completed FROM plans WHERE date=?1 ORDER BY CASE priority WHEN 'Must' THEN 1 WHEN 'Should' THEN 2 ELSE 3 END, id").map_err(|e| e.to_string())?;
+    let mut statement = conn.prepare("SELECT id, date, priority, content, completed, memo FROM plans WHERE date=?1 ORDER BY CASE priority WHEN 'Must' THEN 1 WHEN 'Should' THEN 2 ELSE 3 END, id").map_err(|e| e.to_string())?;
     let result = statement.query_map(params![date], row_to_plan).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string()); result
 }
 #[tauri::command]
 fn create_plan(priority: String, content: String, db: State<Db>) -> Result<Plan, String> {
     if !["Must", "Should", "Could"].contains(&priority.as_str()) || content.trim().is_empty() { return Err("올바른 계획을 입력하세요.".into()); }
     let date = Local::now().format("%Y-%m-%d").to_string(); let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.execute("INSERT INTO plans (date, priority, content, completed) VALUES (?1, ?2, ?3, 0)", params![date, priority, content.trim()]).map_err(|e| e.to_string())?;
-    Ok(Plan { id: conn.last_insert_rowid(), date, priority, content: content.trim().into(), completed: false })
+    conn.execute("INSERT INTO plans (date, priority, content, completed, memo) VALUES (?1, ?2, ?3, 0, '')", params![date, priority, content.trim()]).map_err(|e| e.to_string())?;
+    Ok(Plan { id: conn.last_insert_rowid(), date, priority, content: content.trim().into(), memo: String::new(), completed: false })
+}
+#[tauri::command]
+fn update_plan(id: i64, content: String, memo: String, db: State<Db>) -> Result<Plan, String> {
+    if content.trim().is_empty() { return Err("올바른 계획을 입력하세요.".into()); }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute("UPDATE plans SET content=?1, memo=?2 WHERE id=?3", params![content.trim(), memo.trim(), id]).map_err(|e| e.to_string())?;
+    conn.query_row("SELECT id, date, priority, content, completed, memo FROM plans WHERE id=?1", params![id], row_to_plan).map_err(|e| e.to_string())
 }
 #[tauri::command]
 fn toggle_plan(id: i64, completed: bool, db: State<Db>) -> Result<(), String> { db.0.lock().map_err(|e| e.to_string())?.execute("UPDATE plans SET completed=?1 WHERE id=?2", params![completed as i64, id]).map_err(|e| e.to_string())?; Ok(()) }
@@ -91,7 +98,7 @@ fn delete_plan(id: i64, db: State<Db>) -> Result<(), String> { db.0.lock().map_e
 fn daily_summary(date: Option<String>, db: State<Db>) -> Result<Summary, String> {
     let date = date.unwrap_or_else(|| Local::now().format("%Y-%m-%d").to_string()); let conn = db.0.lock().map_err(|e| e.to_string())?;
     let notes = select_notes(&conn, "SELECT id, content, created_at, updated_at, tags, project, category FROM notes WHERE substr(created_at, 1, 10)=?1 ORDER BY created_at DESC", &date)?;
-    let completed = { let mut statement = conn.prepare("SELECT id, date, priority, content, completed FROM plans WHERE date=?1 AND completed=1 ORDER BY id").map_err(|e| e.to_string())?; let result = statement.query_map(params![date], row_to_plan).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?; result };
+    let completed = { let mut statement = conn.prepare("SELECT id, date, priority, content, completed, memo FROM plans WHERE date=?1 AND completed=1 ORDER BY id").map_err(|e| e.to_string())?; let result = statement.query_map(params![date], row_to_plan).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?; result };
     let mut summary = Summary { completed, decisions: vec![], work: vec![], ideas: vec![], questions: vec![], feedback: vec![] };
     for note in notes { match note.category.as_str() { "결정" => summary.decisions.push(note), "아이디어" => summary.ideas.push(note), "질문" => summary.questions.push(note), "피드백" => summary.feedback.push(note), _ => summary.work.push(note) } }
     Ok(summary)
@@ -114,9 +121,11 @@ fn save_settings(settings: Settings, app: tauri::AppHandle) -> Result<(), String
 pub fn run() {
     tauri::Builder::default().plugin(tauri_plugin_global_shortcut::Builder::new().build()).setup(|app| {
         let dir = app.path().app_data_dir()?; fs::create_dir_all(&dir)?; let conn = Connection::open(dir.join("trace.db"))?;
-        conn.execute_batch("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', project TEXT, category TEXT NOT NULL DEFAULT '업무'); CREATE TABLE IF NOT EXISTS plans (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, priority TEXT NOT NULL CHECK(priority IN ('Must','Should','Could')), content TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0); CREATE INDEX IF NOT EXISTS idx_plans_date ON plans(date); CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at); CREATE INDEX IF NOT EXISTS idx_notes_category ON notes(category);")?;
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', project TEXT, category TEXT NOT NULL DEFAULT '업무'); CREATE TABLE IF NOT EXISTS plans (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, priority TEXT NOT NULL CHECK(priority IN ('Must','Should','Could')), content TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0);")?;
+        conn.execute("ALTER TABLE plans ADD COLUMN memo TEXT NOT NULL DEFAULT ''", []).or_else(|e| if e.to_string().contains("duplicate column name") { Ok(0) } else { Err(e) })?;
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_plans_date ON plans(date); CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at); CREATE INDEX IF NOT EXISTS idx_notes_category ON notes(category);")?;
         app.manage(Db(Mutex::new(conn))); Ok(())
-    }).invoke_handler(tauri::generate_handler![create_note, list_notes, update_note, delete_note, list_plans, create_plan, toggle_plan, delete_plan, daily_summary, weekly_summary, get_settings, save_settings]).run(tauri::generate_context!()).expect("failed to run Trace");
+    }).invoke_handler(tauri::generate_handler![create_note, list_notes, update_note, delete_note, list_plans, create_plan, update_plan, toggle_plan, delete_plan, daily_summary, weekly_summary, get_settings, save_settings]).run(tauri::generate_context!()).expect("failed to run Trace");
 }
 
 #[cfg(test)]

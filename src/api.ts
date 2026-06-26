@@ -7,6 +7,7 @@ export const api = {
   deleteNote: (id: number) => invoke<void>("delete_note", { id }),
   listPlans: (date?: string) => invoke<Plan[]>("list_plans", { date }),
   createPlan: (priority: Plan["priority"], content: string) => invoke<Plan>("create_plan", { priority, content }),
+  updatePlan: (id: number, content: string, memo: string) => invoke<Plan>("update_plan", { id, content, memo }),
   togglePlan: (id: number, completed: boolean) => invoke<void>("toggle_plan", { id, completed }),
   deletePlan: (id: number) => invoke<void>("delete_plan", { id }),
   dailySummary: (date?: string) => invoke<Summary>("daily_summary", { date }),
