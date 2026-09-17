@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "tauri build --bundles app",
+    "postdesktop:build": "sh scripts/install-app.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
