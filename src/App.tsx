@@ -8,6 +8,8 @@ import TaskWorkspace, { TaskStore, useTasks } from "./TaskWorkspace";
 import type { CheckItem, DayActivity, DayOrderEntry, Plan, TaskItem } from "./types";
 
 const isDesktop = "__TAURI_INTERNALS__" in window;
+// Native translucent materials are macOS-only; Windows always uses the white surface.
+const isMac = navigator.userAgent.includes("Mac");
 const widgetSize = new LogicalSize(404, 592);
 const trackerSize = new LogicalSize(1000, 740);
 
@@ -20,7 +22,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : Str
 const titleDate = (date: string) => `${formatDate(date, { month: "long", day: "numeric" })} (${formatDate(date, { weekday: "short" })})`;
 
 // Shortcut calls run one at a time: a dev re-mount or webview reload must release the previous
-// registration before registering again, or macOS rejects the duplicate hotkey.
+// registration before registering again, or the OS rejects the duplicate hotkey.
 let shortcutQueue: Promise<void> = Promise.resolve();
 const queueShortcut = (task: () => Promise<void>) => { shortcutQueue = shortcutQueue.then(task); };
 
@@ -50,7 +52,7 @@ export default function App() {
     let disposed = false;
     const reduced = window.matchMedia("(prefers-reduced-transparency: reduce)");
     const apply = () => {
-      const enabled = backgroundEnabled && !reduced.matches;
+      const enabled = isMac && backgroundEnabled && !reduced.matches;
       if (!enabled) document.documentElement.dataset.translucent = "false";
       void invoke<boolean>("set_window_blur", { enabled, expanded }).then((applied) => {
         if (!disposed) document.documentElement.dataset.translucent = String(applied);
@@ -160,9 +162,8 @@ export default function App() {
         });
         registered = shortcut;
       } catch (cause) {
-        setError(message(cause).includes("RegisterEventHotKey")
-          ? "전역 단축키를 다른 앱이 사용 중이라 등록하지 못했어요. 설치된 Trace가 함께 실행 중인지 확인하세요."
-          : message(cause));
+        // The OS refuses a hotkey another process holds (often a second Trace, e.g. a dev build).
+        setError(`전역 단축키(${isMac ? "⌘" : "Ctrl"} + ;)를 등록하지 못했어요. 같은 단축키를 쓰는 다른 앱이나 함께 실행 중인 Trace가 있는지 확인하세요.`);
       }
     });
     return () => {
@@ -268,7 +269,7 @@ export default function App() {
           <h1>{section === "today" ? titleDate(today) : "TASK"}</h1>
         )}
         <div className={expanded ? "tracker-window-actions" : "window-actions"}>
-          <AppearanceMenu backgroundEnabled={backgroundEnabled} onChange={setBackgroundEnabled} />
+          {isMac && <AppearanceMenu backgroundEnabled={backgroundEnabled} onChange={setBackgroundEnabled} />}
           {expanded ? <IconButton label="작게 보기" onClick={() => void changeMode(false)}><CollapseIcon /></IconButton> : (
             <>
               <IconButton label={section === "today" ? "캘린더로 확장" : "태스크 확장"} onClick={() => void changeMode(true)}><ExpandIcon /></IconButton>
